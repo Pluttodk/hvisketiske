@@ -1,0 +1,26 @@
+[project]
+name = "hvisketiske"
+version = "0.1.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "Mathias Oliver Valdbjørn Rønnelund", email = "mathiasoliverjorgensen@hotmail.com"},
+]
+dependencies = [
+    "ctranslate2>=4.5.0",
+    "transformers>=4.49.0",
+    "datasets>=3.4.1",
+    "torch>=2.6.0",
+    "faster-whisper>=0.9.0",
+    "pydantic>=2.0.0",
+    "numpy>=1.22.0",
+    "librosa>=0.9.0",
+    "resampy>=0.4.3",
+    "jiwer>=3.1.0",
+    "soundfile>=0.13.1",
+]
+requires-python = "==3.10.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+[tool.pdm]
+distribution = false
