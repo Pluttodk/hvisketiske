@@ -1,0 +1,1 @@
+export LD_LIBRARY_PATH=${PWD}/.venv/lib/python3.10/site-packages/nvidia/cublas/lib:${PWD}/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib

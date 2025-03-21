@@ -61,14 +61,14 @@ else:
 
 # Try to load the model with the selected device
 try:
-    fast_model = WhisperModel(str(output_dir / "ct2_model"), device=device, compute_type=compute_type)
+    fast_model = WhisperModel("pluttodk/hviske-tiske", device=device, compute_type=compute_type)
     print(f"Model loaded successfully using {device}")
 except (ValueError, RuntimeError, ImportError) as e:
     print(f"Error loading model with {device}: {e}")
     print("Falling back to CPU")
     device = "cpu"
     compute_type = "int8"  # Using int8 on CPU for better performance
-    fast_model = WhisperModel(str(output_dir / "ct2_model"), device=device, compute_type=compute_type)
+    fast_model = WhisperModel("pluttodk/hviske-tiske", device=device, compute_type=compute_type)
     print("Model loaded successfully using CPU")
 
 fast_model_turbo = WhisperModel(
@@ -81,7 +81,7 @@ fast_model_turbo = WhisperModel(
 print(f"Transcribing using {device}...")
 
 def hviskev2(audio):
-    result = hviskev2_pipe(audio)
+    result = hviskev2_pipe(audio, return_timestamps=True)
     return result["text"]
 
 def distilhviskev2(audio):
@@ -96,7 +96,7 @@ class ModelEvaluator:
     def __init__(self):
         # Initialize faster-whisper model (distilled)
         self.distilled_model = WhisperModel(
-            str(Path("faster_hviskev2/ct2_model")), 
+            "pluttodk/hviske-tiske", 
             device="cuda" if torch.cuda.is_available() else "cpu",
             compute_type="float16" if torch.cuda.is_available() else "int8"
         )
@@ -169,6 +169,88 @@ class ModelEvaluator:
         
         return results
 
+def evaluate_different_durations(evaluator, audio_data, sampling_rate, reference_text):
+    """Evaluate models on different audio durations by extending the original audio"""
+    # Define target durations in seconds
+    durations = [5, 10, 30, 60, 600, 1800]  # 5s, 10s, 30s, 1min, 10min, 30min
+    duration_labels = ["5s", "10s", "30s", "1min", "10min", "30min"]
+    
+    # Calculate original audio duration in seconds
+    original_duration = len(audio_data) / sampling_rate
+    print(f"Original audio duration: {original_duration:.2f} seconds")
+    
+    # Results storage
+    duration_results = []
+    
+    # Process each target duration
+    for i, (duration, label) in enumerate(zip(durations, duration_labels)):
+        print(f"\nProcessing extended audio of {label} duration...")
+        
+        # Calculate how many times to repeat the audio
+        repeat_times = int(np.ceil(duration / original_duration))
+        
+        # Create the extended audio by repeating the original
+        extended_audio = np.tile(audio_data, repeat_times)
+        
+        # Trim to exact length if needed
+        target_samples = int(duration * sampling_rate)
+        if len(extended_audio) > target_samples:
+            extended_audio = extended_audio[:target_samples]
+        
+        # Save as temporary WAV file
+        audio_path = f"temp_extended_{label}.wav"
+        import soundfile as sf
+        sf.write(audio_path, extended_audio, sampling_rate)
+        
+        # Evaluate
+        results = evaluator.evaluate_sample(audio_path, reference_text)
+        
+        # Store results
+        for model_type, result in results.items():
+            duration_results.append({
+                "duration": label,
+                "duration_seconds": duration,
+                "model": model_type,
+                "reference": reference_text,
+                "transcription": result.text,
+                "wer": result.wer,
+                "cer": result.cer,
+                "time": result.time_taken
+            })
+        
+        # Print sample results
+        print(f"\n{label} Duration Results:")
+        for model_type, result in results.items():
+            print(f"\n{model_type.capitalize()} Model:")
+            print(f"Time: {result.time_taken:.2f}s")
+            print(f"WER: {result.wer:.4f}")
+            print(f"CER: {result.cer:.4f}")
+        
+        # Clean up
+        Path(audio_path).unlink()
+    
+    # Create DataFrame and save to CSV
+    df = pd.DataFrame(duration_results)
+    csv_path = Path("duration_evaluation_results.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"\nDuration results saved to {csv_path}")
+    
+    # Print average results grouped by model and duration
+    print("\nAverage Results by Duration:")
+    summary = df.groupby(["duration", "model"]).agg({
+        "wer": ["mean"],
+        "cer": ["mean"],
+        "time": ["mean"]
+    })
+    print(summary)
+    
+    # Save the summary to a file
+    summary_csv_path = Path("duration_evaluation_summary.csv")
+    summary.to_csv(summary_csv_path)
+    print(f"\nDuration summary saved to {summary_csv_path}")
+    
+    return duration_results
+
 def main():
     """Main function to run evaluation"""
     # Load 10 samples from Coral dataset
@@ -179,66 +261,84 @@ def main():
     results_data = []
     
     print(f"A total samples of {len(dataset)}")
-    # Process first 10 samples
-    for i, sample in enumerate(dataset):
-        print(f"\nProcessing sample {i+1}...")
+    
+    # First, evaluate the different durations for the first sample only
+    first_sample = dataset[0]
+    print("\n--- EVALUATING DIFFERENT DURATIONS FOR FIRST SAMPLE ---")
+    audio_data = first_sample["audio"]["array"]
+    sampling_rate = first_sample["audio"]["sampling_rate"]
+    reference_text = first_sample["text"]
+    
+    # Evaluate different durations
+    # Evaluate different durations and save the results
+    duration_results = evaluate_different_durations(evaluator, audio_data, sampling_rate, reference_text)
+    
+    # Ensure results are saved with a descriptive filename
+    results_df = pd.DataFrame(duration_results)
+    csv_filename = Path(f"duration_evaluation_results.csv")
+    results_df.to_csv(csv_filename, index=False)
+    print(f"Duration evaluation results saved to {csv_filename}")
+    
+    # # Process first 10 samples for regular evaluation
+    # for i, sample in enumerate(dataset):
+    #     print(f"\nProcessing sample {i+1}...")
         
-        # Save audio to temporary file
-        audio_path = f"temp_audio_{i}.wav"
-        import soundfile as sf
-        audio_data = sample["audio"]["array"]
-        sampling_rate = sample["audio"]["sampling_rate"]
+    #     # Save audio to temporary file
+    #     audio_path = f"temp_audio_{i}.wav"
+    #     import soundfile as sf
+    #     audio_data = sample["audio"]["array"]
+    #     sampling_rate = sample["audio"]["sampling_rate"]
         
-        # Save as WAV file
-        sf.write(audio_path, audio_data, sampling_rate)
+    #     # Save as WAV file
+    #     sf.write(audio_path, audio_data, sampling_rate)
         
-        # Evaluate
-        results = evaluator.evaluate_sample(audio_path, sample["text"])
+    #     # Evaluate
+    #     results = evaluator.evaluate_sample(audio_path, sample["text"])
         
-        # Store results in data list
-        for model_type, result in results.items():
-            results_data.append({
-                "sample_id": i,
-                "model": model_type,
-                "reference": sample["text"],
-                "transcription": result.text,
-                "wer": result.wer,
-                "cer": result.cer,
-                "time": result.time_taken
-            })
+    #     # Store results in data list
+    #     for model_type, result in results.items():
+    #         results_data.append({
+    #             "sample_id": i,
+    #             "model": model_type,
+    #             "reference": sample["text"],
+    #             "transcription": result.text,
+    #             "wer": result.wer,
+    #             "cer": result.cer,
+    #             "time": result.time_taken
+    #         })
             
-        # Clean up
-        Path(audio_path).unlink()
+    #     # Clean up
+    #     Path(audio_path).unlink()
         
-        # Print sample results
-        print(f"\nSample {i+1} Results:")
-        print(f"Reference: {sample['text']}")
-        for model_type, result in results.items():
-            print(f"\n{model_type.capitalize()} Model:")
-            print(f"Transcription: {result.text}")
-            print(f"Time: {result.time_taken:.2f}s")
-            print(f"WER: {result.wer:.4f}")
-            print(f"CER: {result.cer:.4f}")
+    #     # Print sample results
+    #     print(f"\nSample {i+1} Results:")
+    #     print(f"Reference: {sample['text']}")
+    #     for model_type, result in results.items():
+    #         print(f"\n{model_type.capitalize()} Model:")
+    #         print(f"Transcription: {result.text}")
+    #         print(f"Time: {result.time_taken:.2f}s")
+    #         print(f"WER: {result.wer:.4f}")
+    #         print(f"CER: {result.cer:.4f}")
     
-    # Create DataFrame and save to CSV
-    df = pd.DataFrame(results_data)
-    csv_path = Path("model_evaluation_results.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"\nResults saved to {csv_path}")
+    # # Create DataFrame and save to CSV
+    # df = pd.DataFrame(results_data)
+    # csv_path = Path("model_evaluation_results.csv")
+    # df.to_csv(csv_path, index=False)
+    # print(f"\nResults saved to {csv_path}")
     
-    # Print average results grouped by model
-    print("\nAverage Results:")
-    summary = df.groupby("model").agg({
-        "wer": ["mean", "std"],
-        "cer": ["mean", "std"],
-        "time": ["mean", "std"]
-    })
-    print(summary)
+    # # Print average results grouped by model
+    # print("\nAverage Results:")
+    # summary = df.groupby("model").agg({
+    #     "wer": ["mean", "std"],
+    #     "cer": ["mean", "std"],
+    #     "time": ["mean", "std"]
+    # })
+    # print(summary)
     
-    # Save the summary to a file
-    summary_csv_path = Path("model_evaluation_summary.csv")
-    summary.to_csv(summary_csv_path)
-    print(f"\nSummary saved to {summary_csv_path}")
+    # # Save the summary to a file
+    # summary_csv_path = Path("model_evaluation_summary.csv")
+    # summary.to_csv(summary_csv_path)
+    # print(f"\nSummary saved to {summary_csv_path}")
 
 if __name__ == "__main__":
     main()

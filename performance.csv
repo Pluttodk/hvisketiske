@@ -1,0 +1,4 @@
+model,wer (mean),wer (std),cer (mean),cer (std),time (mean),time (std)
+hviske-v2,0.124101,0.162295,0.050109,0.079331,0.581712,0.136740
+hviske-tiske,0.127241,0.167049,0.052416,0.085956,0.166297,0.007014
+faster-whisper-large-v3-turbo-ct2,0.497013,0.242836,0.172726,0.131111,0.171653,0.007839
